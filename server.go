@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"context"
+	"crypto/tls"
 	"git.padmadigital.id/potato/go-logutil"
 	"log"
 	"net/http"
@@ -23,6 +24,9 @@ type ServerManager struct {
 	wg          *sync.WaitGroup // WaitGroup for waiting for all servers to exit.
 	Logger      logutil.Logger  // An instance of logutil.Logger for the manager to log to.
 	lastErr     error
+	// TlsConfig defines a custom TLS config to be passed to TLS servers when started.
+	// It cannot be changed in runtime, so servers have to be restarted again.
+	TlsConfig *tls.Config
 }
 
 // NewServerManager creates a new ServerManager with the default logger.
@@ -43,9 +47,10 @@ func NewServerManager() *ServerManager {
 // Create a new server.
 func (manager *ServerManager) createServer(listenAddress string, handler http.Handler, onShutdown func()) (server *http.Server) {
 	server = &http.Server{
-		Addr:     listenAddress,
-		Handler:  handler,
-		ErrorLog: log.New(&logutil.StdLogAdapter{Logger: manager.Logger}, "", 0),
+		Addr:      listenAddress,
+		Handler:   handler,
+		ErrorLog:  log.New(&logutil.StdLogAdapter{Logger: manager.Logger}, "", 0),
+		TLSConfig: manager.TlsConfig,
 	}
 
 	server.RegisterOnShutdown(onShutdown)
