@@ -19,15 +19,27 @@ import (
 )
 
 type CompressorFileServerConfig struct {
-	EnableBrotli  bool
-	EnableGzip    bool
-	EnableZlib    bool
-	EnableLzw     bool
+	// Enables the "br" compression.
+	EnableBrotli bool
+	// Enables the "gzip" compression.
+	EnableGzip bool
+	// Enables the "deflate" compression.
+	EnableZlib bool
+	// Enables the "compress" compression.
+	EnableLzw bool
+	// Brotli quality level: 0 to 11.
 	BrotliQuality int
-	GzipQuality   int
-	ZlibQuality   int
-	ContentTypes  []string
-	MinLength     int
+	// GZIP quality level: -1 to 9.
+	// -1 for default compression, 0 for no compression, 9 for maximum compression.
+	GzipQuality int
+	// ZLIB quality level: -1 to 9.
+	// -1 for default compression, 0 for no compression, 9 for maximum compression.
+	ZlibQuality int
+	// ContentTypes that are supported to be compressed.
+	// Empty will compress all.
+	ContentTypes []string
+	// The minimum length of the content that is going to be written for compression to be active.
+	MinLength int
 }
 
 type compressorFileServer struct {
@@ -36,13 +48,19 @@ type compressorFileServer struct {
 	defaultHandler http.Handler
 }
 
+// CompressorFileServer creates another variant of http.FileServer which supports compression.
+// It does not however support byte range (Accept-Ranges header), in which it will just use the normal
+// http.FileServer and compression is disabled altogether.
+//
+// When compression is enabled, Content-Length header will be removed.
 func CompressorFileServer(config *CompressorFileServerConfig, root http.FileSystem) http.Handler {
 	return &compressorFileServer{root: root, config: config, defaultHandler: http.FileServer(root)}
 }
 
 func (c compressorFileServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	acceptEncoding := request.Header.Get("Accept-Encoding")
-	if acceptEncoding == "" {
+	acceptRanges := request.Header.Get("Accept-Ranges")
+	if acceptEncoding == "" || acceptRanges != "" {
 		c.defaultHandler.ServeHTTP(writer, request)
 		return
 	}
@@ -108,6 +126,15 @@ func (c compressorFileServer) ServeHTTP(writer http.ResponseWriter, request *htt
 	}
 }
 
+// GzipResponseWriter is a http.ResponseWriter which supports writing content
+// with gzip compression. This response writer does not care about the Accept-Encoding header,
+// and will write Content-Encoding header immediately just before the first call of Write.
+//
+// Compression headers are only sent before first call to write to be able to disable compression in case
+// content type and length are outside the defined parameters. The response writer checks if Content-Type and
+// Content-Length headers were set before the first call to Write to see the type and length of the content sent.
+//
+// This response writer requires closing, so it must be closed after all writes have been completed.
 type GzipResponseWriter struct {
 	http.ResponseWriter
 	contentTypes map[string]struct{}
@@ -117,6 +144,7 @@ type GzipResponseWriter struct {
 	level        int
 }
 
+// NewGzipResponseWriter creates a new compression response writer.
 func NewGzipResponseWriter(writer http.ResponseWriter, level, minLength int, contentTypes []string) *GzipResponseWriter {
 	ctm := make(map[string]struct{})
 	for _, ct := range contentTypes {
@@ -127,6 +155,7 @@ func NewGzipResponseWriter(writer http.ResponseWriter, level, minLength int, con
 
 func (grw *GzipResponseWriter) writeHeader() {
 	grw.ResponseWriter.Header().Set("Content-Encoding", "gzip")
+	grw.ResponseWriter.Header().Del("Content-Length")
 }
 
 func (grw *GzipResponseWriter) createWriter() {
@@ -158,6 +187,14 @@ func (grw *GzipResponseWriter) enable() {
 	}
 }
 
+func (grw *GzipResponseWriter) WriteHeader(statusCode int) {
+	grw.once.Do(grw.enable)
+	grw.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Write writes data to response with compression (if compression can be enabled).
+// First call to Write (or WriteHeader) will check if compression can be enabled. If not it will behave just like a normal
+// http.ResponseWriter.
 func (grw *GzipResponseWriter) Write(data []byte) (int, error) {
 	grw.once.Do(grw.enable)
 
@@ -180,6 +217,7 @@ func (grw *GzipResponseWriter) Flush() {
 	}
 }
 
+// Close closes this writer by flushing and sending the compression footer bytes.
 func (grw *GzipResponseWriter) Close() error {
 	if grw.gw == nil {
 		return nil
@@ -196,6 +234,15 @@ func (grw *GzipResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, fmt.Errorf("http.Hijacker interface is not supported")
 }
 
+// BrotliResponseWriter is a http.ResponseWriter which supports writing content
+// with Brotli compression. This response writer does not care about the Accept-Encoding header,
+// and will write Content-Encoding header immediately just before the first call of Write.
+//
+// Compression headers are only sent before first call to write to be able to disable compression in case
+// content type and length are outside the defined parameters. The response writer checks if Content-Type and
+// Content-Length headers were set before the first call to Write to see the type and length of the content sent.
+//
+// This response writer requires closing, so it must be closed after all writes have been completed.
 type BrotliResponseWriter struct {
 	http.ResponseWriter
 	contentTypes map[string]struct{}
@@ -205,6 +252,7 @@ type BrotliResponseWriter struct {
 	quality      int
 }
 
+// NewBrotliResponseWriter creates a new compression response writer.
 func NewBrotliResponseWriter(writer http.ResponseWriter, quality, minLength int, contentTypes []string) *BrotliResponseWriter {
 	ctm := make(map[string]struct{})
 	for _, ct := range contentTypes {
@@ -215,6 +263,7 @@ func NewBrotliResponseWriter(writer http.ResponseWriter, quality, minLength int,
 
 func (brw *BrotliResponseWriter) writeHeader() {
 	brw.ResponseWriter.Header().Set("Content-Encoding", "br")
+	brw.ResponseWriter.Header().Del("Content-Length")
 }
 
 func (brw *BrotliResponseWriter) createWriter() {
@@ -246,6 +295,14 @@ func (brw *BrotliResponseWriter) enable() {
 	}
 }
 
+func (brw *BrotliResponseWriter) WriteHeader(statusCode int) {
+	brw.once.Do(brw.enable)
+	brw.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Write writes data to response with compression (if compression can be enabled).
+// First call to Write (or WriteHeader) will check if compression can be enabled. If not it will behave just like a normal
+// http.ResponseWriter.
 func (brw *BrotliResponseWriter) Write(data []byte) (int, error) {
 	brw.once.Do(brw.enable)
 
@@ -268,6 +325,7 @@ func (brw *BrotliResponseWriter) Flush() {
 	}
 }
 
+// Close closes this writer by flushing and sending the compression footer bytes.
 func (brw *BrotliResponseWriter) Close() error {
 	if brw.bw == nil {
 		return nil
@@ -284,6 +342,15 @@ func (brw *BrotliResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, fmt.Errorf("http.Hijacker interface is not supported")
 }
 
+// LzwResponseWriter is a http.ResponseWriter which supports writing content
+// with LZW ("compress") compression. This response writer does not care about the Accept-Encoding header,
+// and will write Content-Encoding header immediately just before the first call of Write.
+//
+// Compression headers are only sent before first call to write to be able to disable compression in case
+// content type and length are outside the defined parameters. The response writer checks if Content-Type and
+// Content-Length headers were set before the first call to Write to see the type and length of the content sent.
+//
+// This response writer requires closing, so it must be closed after all writes have been completed.
 type LzwResponseWriter struct {
 	http.ResponseWriter
 	contentTypes map[string]struct{}
@@ -292,6 +359,7 @@ type LzwResponseWriter struct {
 	once         *sync.Once
 }
 
+// NewLzwResponseWriter creates a new compression response writer.
 func NewLzwResponseWriter(writer http.ResponseWriter, minLength int, contentTypes []string) *LzwResponseWriter {
 	ctm := make(map[string]struct{})
 	for _, ct := range contentTypes {
@@ -302,6 +370,7 @@ func NewLzwResponseWriter(writer http.ResponseWriter, minLength int, contentType
 
 func (lrw *LzwResponseWriter) writeHeader() {
 	lrw.ResponseWriter.Header().Set("Content-Encoding", "gzip")
+	lrw.ResponseWriter.Header().Del("Content-Length")
 }
 
 func (lrw *LzwResponseWriter) createWriter() {
@@ -333,6 +402,14 @@ func (lrw *LzwResponseWriter) enable() {
 	}
 }
 
+func (lrw *LzwResponseWriter) WriteHeader(statusCode int) {
+	lrw.once.Do(lrw.enable)
+	lrw.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Write writes data to response with compression (if compression can be enabled).
+// First call to Write (or WriteHeader) will check if compression can be enabled. If not it will behave just like a normal
+// http.ResponseWriter.
 func (lrw *LzwResponseWriter) Write(data []byte) (int, error) {
 	lrw.once.Do(lrw.enable)
 
@@ -349,6 +426,7 @@ func (lrw *LzwResponseWriter) Flush() {
 	}
 }
 
+// Close closes this writer by flushing and sending the compression footer bytes.
 func (lrw *LzwResponseWriter) Close() error {
 	if lrw.lw == nil {
 		return nil
@@ -365,6 +443,15 @@ func (lrw *LzwResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, fmt.Errorf("http.Hijacker interface is not supported")
 }
 
+// ZlibResponseWriter is a http.ResponseWriter which supports writing content
+// with zlib ("deflate") compression. This response writer does not care about the Accept-Encoding header,
+// and will write Content-Encoding header immediately just before the first call of Write.
+//
+// Compression headers are only sent before first call to write to be able to disable compression in case
+// content type and length are outside the defined parameters. The response writer checks if Content-Type and
+// Content-Length headers were set before the first call to Write to see the type and length of the content sent.
+//
+// This response writer requires closing, so it must be closed after all writes have been completed.
 type ZlibResponseWriter struct {
 	http.ResponseWriter
 	contentTypes map[string]struct{}
@@ -384,6 +471,7 @@ func NewZlibResponseWriter(writer http.ResponseWriter, level, minLength int, con
 
 func (zrw *ZlibResponseWriter) writeHeader() {
 	zrw.ResponseWriter.Header().Set("Content-Encoding", "gzip")
+	zrw.ResponseWriter.Header().Del("Content-Length")
 }
 
 func (zrw *ZlibResponseWriter) createWriter() {
@@ -415,6 +503,14 @@ func (zrw *ZlibResponseWriter) enable() {
 	}
 }
 
+func (zrw *ZlibResponseWriter) WriteHeader(statusCode int) {
+	zrw.once.Do(zrw.enable)
+	zrw.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Write writes data to response with compression (if compression can be enabled).
+// First call to Write (or WriteHeader) will check if compression can be enabled. If not it will behave just like a normal
+// http.ResponseWriter.
 func (zrw *ZlibResponseWriter) Write(data []byte) (int, error) {
 	zrw.once.Do(zrw.enable)
 
@@ -437,6 +533,7 @@ func (zrw *ZlibResponseWriter) Flush() {
 	}
 }
 
+// Close closes this writer by flushing and sending the compression footer bytes.
 func (zrw *ZlibResponseWriter) Close() error {
 	if zrw.zw == nil {
 		return nil
