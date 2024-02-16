@@ -41,7 +41,7 @@ type CompressorFileServerConfig struct {
 	// Enables the "compress" compression.
 	EnableLzw bool
 	// Brotli encoder, you can use the cbrotli library (this requires cgo).
-	BrotliEncoder BrotliCompressorEncoder
+	BrotliEncoder func(writer http.ResponseWriter) BrotliCompressorEncoder
 	// GZIP quality level: -1 to 9.
 	// -1 for default compression, 0 for no compression, 9 for maximum compression.
 	GzipQuality int
@@ -712,7 +712,7 @@ func (c *compressorFileServer) ServeHTTP(writer http.ResponseWriter, request *ht
 
 	usedAlg := algs[0]
 	if c.config.EnableBrotli && usedAlg == "br" {
-		bw := NewBrotliResponseWriter(writer, c.config.BrotliEncoder, c.config.MinLength, c.config.ContentTypes)
+		bw := NewBrotliResponseWriter(writer, c.config.BrotliEncoder(writer), c.config.MinLength, c.config.ContentTypes)
 		defer bw.Close()
 
 		c.handleServeContent(bw, request)
