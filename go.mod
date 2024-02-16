@@ -2,10 +2,7 @@ module git.padmadigital.id/potato/go-httputil
 
 go 1.18
 
-require (
-	git.padmadigital.id/potato/go-logutil v1.0.0
-	github.com/google/brotli/go/cbrotli v0.0.0-20240202112650-c1362a7903dd
-)
+require git.padmadigital.id/potato/go-logutil v1.0.0
 
 require (
 	github.com/fluent/fluent-logger-golang v1.9.0 // indirect
