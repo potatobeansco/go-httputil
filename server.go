@@ -3,7 +3,8 @@ package httputil
 import (
 	"context"
 	"crypto/tls"
-	"git.padmadigital.id/potato/go-logutil"
+	"errors"
+	"github.com/potatobeansco/go-logutil"
 	"log"
 	"net/http"
 	"sync"
@@ -82,7 +83,7 @@ func (manager *ServerManager) SpawnHttp(listenAddress string, handler http.Handl
 	go func() {
 		manager.Logger.Infof("spawning HTTP server on %s", listenAddress)
 		err := server.ListenAndServe()
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			manager.lastErr = err
 			manager.Logger.Error(err.Error())
 			manager.Shutdown()
@@ -113,7 +114,7 @@ func (manager *ServerManager) SpawnHttpTls(listenAddress string, handler http.Ha
 	go func() {
 		manager.Logger.Infof("spawning HTTP TLS server on %s", listenAddress)
 		err := server.ListenAndServeTLS(certFile, keyFile)
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			manager.lastErr = err
 			manager.Logger.Error(err.Error())
 			manager.Shutdown()

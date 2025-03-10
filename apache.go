@@ -2,8 +2,8 @@ package httputil
 
 import (
 	"context"
-	"git.padmadigital.id/potato/go-logutil"
 	"github.com/felixge/httpsnoop"
+	"github.com/potatobeansco/go-logutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,6 +13,7 @@ import (
 )
 
 // LogFormatterParams is the structure any formatter will be handed when time to log comes.
+// Taken and modified from Gorilla mux.
 type LogFormatterParams struct {
 	Request    *http.Request
 	URL        url.URL
