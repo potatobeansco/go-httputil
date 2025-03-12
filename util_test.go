@@ -3,7 +3,7 @@ package httputil_test
 import (
 	"encoding/json"
 	"errors"
-	"git.padmadigital.id/potato/go-httputil"
+	"github.com/potatobeansco/go-httputil"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
